@@ -103,6 +103,7 @@ const MinerEarningsStrip: React.FC<MinerEarningsStripProps> = ({
   const credibility = Number(minerStats.credibility || 0);
   const dailyUsd = minerStats.usdPerDay ?? 0;
   const monthlyUsd = dailyUsd * 30;
+  const yearlyUsd = dailyUsd * 365;
   const lifetimeUsd = minerStats.lifetimeUsd ?? 0;
 
   const items = [
@@ -110,10 +111,16 @@ const MinerEarningsStrip: React.FC<MinerEarningsStripProps> = ({
       label: 'Daily',
       value: `$${Math.round(dailyUsd).toLocaleString()}`,
       color: dailyUsd > 0 ? STATUS_COLORS.success : undefined,
+      isPrimary: true,
     },
     {
       label: 'Monthly',
       value: `$${Math.round(monthlyUsd).toLocaleString()}`,
+      color: dailyUsd > 0 ? STATUS_COLORS.success : undefined,
+    },
+    {
+      label: 'Yearly',
+      value: `$${Math.round(yearlyUsd).toLocaleString()}`,
       color: dailyUsd > 0 ? STATUS_COLORS.success : undefined,
     },
     {
@@ -175,24 +182,46 @@ const MinerEarningsStrip: React.FC<MinerEarningsStripProps> = ({
       }}
     >
       {items.map((item) => {
+        const isPrimary = 'isPrimary' in item && item.isPrimary;
         const content = (
           <Box
             sx={{
               flex: { xs: '1 1 calc(50% - 8px)', sm: '1 1 0' },
               minWidth: { xs: 'auto', sm: 100 },
-              backgroundColor: 'rgba(255, 255, 255, 0.03)',
+              backgroundColor: isPrimary ? alpha(STATUS_COLORS.success, 0.05) : 'rgba(255, 255, 255, 0.03)',
               borderRadius: 2,
-              border: '1px solid rgba(255, 255, 255, 0.08)',
+              border: '1px solid',
+              borderColor: isPrimary ? alpha(STATUS_COLORS.success, 0.2) : 'rgba(255, 255, 255, 0.08)',
               px: 2,
               py: 1.5,
               display: 'flex',
               flexDirection: 'column',
               gap: 0.5,
+              position: 'relative',
+              overflow: 'hidden',
+              ...(isPrimary && {
+                boxShadow: `0 0 15px ${alpha(STATUS_COLORS.success, 0.1)}`,
+              })
             }}
           >
+            {isPrimary && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: -20,
+                  right: -20,
+                  width: 60,
+                  height: 60,
+                  backgroundColor: alpha(STATUS_COLORS.success, 0.15),
+                  borderRadius: '50%',
+                  filter: 'blur(15px)',
+                  zIndex: 0,
+                }}
+              />
+            )}
             <Typography
               sx={{
-                color: 'rgba(255, 255, 255, 0.5)',
+                color: isPrimary ? alpha(STATUS_COLORS.success, 0.8) : 'rgba(255, 255, 255, 0.5)',
                 fontFamily: '"JetBrains Mono", monospace',
                 fontSize: '0.7rem',
                 textTransform: 'uppercase',
@@ -201,6 +230,8 @@ const MinerEarningsStrip: React.FC<MinerEarningsStripProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 0.5,
+                position: 'relative',
+                zIndex: 1,
                 cursor: item.tooltip ? 'pointer' : 'default',
               }}
             >
@@ -214,6 +245,8 @@ const MinerEarningsStrip: React.FC<MinerEarningsStripProps> = ({
                 display: 'flex',
                 alignItems: 'baseline',
                 gap: 1,
+                position: 'relative',
+                zIndex: 1,
               }}
             >
               <Typography
