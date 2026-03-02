@@ -5,6 +5,7 @@ export { default as MinerEarningsStrip } from './MinerEarningsStrip';
 export { default as MinerOverviewTab } from './MinerOverviewTab';
 export { default as MinerProfileHeader } from './MinerProfileHeader';
 export { default as MinerScoreTab } from './MinerScoreTab';
+export { default as MinerInsights } from './MinerInsights';
 export { default as MinerTierPerformance } from './MinerTierPerformance';
 export { default as MinerTierTab } from './MinerTierTab';
 export { default as PerformanceRadar } from './PerformanceRadar';

@@ -18,6 +18,7 @@ import { ContributionHeatmap } from '../dashboard';
 import TrustBadge from './TrustBadge';
 import CredibilityChart from './CredibilityChart';
 import PerformanceRadar from './PerformanceRadar';
+import MinerInsights from './MinerInsights';
 import { TIER_COLORS, STATUS_COLORS } from '../../theme';
 
 interface MinerOverviewTabProps {
@@ -467,6 +468,12 @@ const MinerOverviewTab: React.FC<MinerOverviewTabProps> = ({
           </Box>
         ))}
       </Box>
+
+      {/* Smart Insights */}
+      <MinerInsights
+        minerStats={minerStats}
+        tierConfigs={tierConfigs}
+      />
     </Box>
   );
 };
