@@ -12,6 +12,15 @@ interface PerformanceRadarProps {
   avgRepoWeight: number;
 }
 
+const INDICATOR_NAMES = [
+  'Credibility',
+  'Complexity',
+  'Issues\nSolved',
+  'Unique\nRepos',
+  'Total\nPRs',
+  'Avg Repo\nWeight',
+];
+
 const PerformanceRadar: React.FC<PerformanceRadarProps> = ({
   credibility,
   complexity,
@@ -20,9 +29,33 @@ const PerformanceRadar: React.FC<PerformanceRadarProps> = ({
   totalPRs,
   avgRepoWeight,
 }) => {
+  const values = [
+    credibility,
+    complexity,
+    issuesSolved,
+    uniqueRepos,
+    totalPRs,
+    avgRepoWeight,
+  ];
+
   const chartOption = useMemo(
     () => ({
       backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item' as const,
+        backgroundColor: 'rgba(30, 30, 30, 0.95)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        textStyle: {
+          fontFamily: '"JetBrains Mono", monospace',
+          fontSize: 12,
+          color: '#ffffff',
+        },
+        formatter: () =>
+          INDICATOR_NAMES.map(
+            (name, i) =>
+              `${name.replace('\n', ' ')}: ${values[i].toFixed(0)}%`,
+          ).join('<br/>'),
+      },
       radar: {
         indicator: [
           { name: 'Credibility', max: 100 },
@@ -33,14 +66,14 @@ const PerformanceRadar: React.FC<PerformanceRadarProps> = ({
           { name: 'Avg Repo\nWeight', max: 100 },
         ],
         center: ['50%', '50%'],
-        radius: '50%',
+        radius: '55%',
         shape: 'circle',
         splitNumber: 5,
         axisName: {
           color: 'rgba(255, 255, 255, 0.6)',
           fontFamily: '"JetBrains Mono", monospace',
-          fontSize: 9,
-          lineHeight: 12,
+          fontSize: 10,
+          lineHeight: 14,
         },
         splitLine: {
           lineStyle: {
@@ -62,16 +95,11 @@ const PerformanceRadar: React.FC<PerformanceRadarProps> = ({
           areaStyle: {
             color: `${STATUS_COLORS.merged}33`,
           },
+          animationDuration: 800,
+          animationEasing: 'cubicOut',
           data: [
             {
-              value: [
-                credibility,
-                complexity,
-                issuesSolved,
-                uniqueRepos,
-                totalPRs,
-                avgRepoWeight,
-              ],
+              value: values,
               name: 'Miner Stats',
               symbol: 'circle',
               symbolSize: 4,
@@ -81,6 +109,7 @@ const PerformanceRadar: React.FC<PerformanceRadarProps> = ({
         },
       ],
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       credibility,
       complexity,
@@ -101,11 +130,15 @@ const PerformanceRadar: React.FC<PerformanceRadarProps> = ({
     >
       <Typography
         variant="monoSmall"
-        sx={{ color: 'rgba(255, 255, 255, 0.4)', mb: 2, textAlign: 'center' }}
+        sx={{
+          color: 'rgba(255, 255, 255, 0.4)',
+          mb: 2,
+          textAlign: 'center',
+        }}
       >
         Performance Profile
       </Typography>
-      <Box sx={{ height: '220px', width: '100%' }}>
+      <Box sx={{ height: '260px', width: '100%' }}>
         <ReactECharts
           option={chartOption}
           style={{ height: '100%', width: '100%' }}

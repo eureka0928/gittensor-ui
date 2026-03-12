@@ -2,20 +2,17 @@ import React from 'react';
 import {
   Box,
   Typography,
+  LinearProgress,
   alpha,
 } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import {
   type MinerEvaluation,
   type TierConfig,
 } from '../../api';
 import { TIER_COLORS, STATUS_COLORS } from '../../theme';
+import { getTierLevel } from '../../utils';
 import MinerTierPerformance from './MinerTierPerformance';
-
-const TIER_LEVELS: Record<string, number> = {
-  bronze: 1,
-  silver: 2,
-  gold: 3,
-};
 
 interface MinerTierTabProps {
   githubId: string;
@@ -28,8 +25,7 @@ const MinerTierTab: React.FC<MinerTierTabProps> = ({
   minerStats,
   tierConfigs,
 }) => {
-  const currentTierLevel =
-    TIER_LEVELS[(minerStats.currentTier || '').toLowerCase()] || 0;
+  const currentTierLevel = getTierLevel(minerStats.currentTier);
 
   // Find next milestone
   const getNextMilestone = () => {
@@ -129,8 +125,57 @@ const MinerTierTab: React.FC<MinerTierTabProps> = ({
 
   const nextMilestone = getNextMilestone();
 
+  const getSequentialUnlockMessage = () => {
+    if (currentTierLevel === 0) {
+      return 'Tiers unlock in order: Candidate \u2192 Bronze \u2192 Silver \u2192 Gold. Meet all Bronze requirements first.';
+    }
+    if (currentTierLevel === 1) {
+      return 'Silver must be unlocked before Gold. PRs to Gold repos earn 0 score until Silver is unlocked.';
+    }
+    if (currentTierLevel === 2) {
+      return 'Unlock Gold by meeting its requirements. Gold PRs score at 0 until unlocked.';
+    }
+    return null;
+  };
+
+  const sequentialMsg = getSequentialUnlockMessage();
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {/* Sequential Unlock Info */}
+      {sequentialMsg && (
+        <Box
+          sx={{
+            borderRadius: 2,
+            border: `1px solid ${alpha(STATUS_COLORS.info, 0.3)}`,
+            backgroundColor: alpha(STATUS_COLORS.info, 0.04),
+            p: { xs: 1.5, sm: 2 },
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 1.5,
+          }}
+        >
+          <InfoOutlinedIcon
+            sx={{
+              color: STATUS_COLORS.info,
+              fontSize: '1.1rem',
+              mt: 0.25,
+              flexShrink: 0,
+            }}
+          />
+          <Typography
+            sx={{
+              fontFamily: '"JetBrains Mono", monospace',
+              fontSize: { xs: '0.75rem', sm: '0.8rem' },
+              color: 'rgba(255, 255, 255, 0.7)',
+              lineHeight: 1.5,
+            }}
+          >
+            {sequentialMsg}
+          </Typography>
+        </Box>
+      )}
+
       {/* Next Milestone Callout */}
       {nextMilestone && (
         <Box
@@ -138,63 +183,115 @@ const MinerTierTab: React.FC<MinerTierTabProps> = ({
             borderRadius: 2,
             border: '1px solid',
             borderColor: alpha(nextMilestone.tierColor, 0.3),
-            backgroundColor: alpha(nextMilestone.tierColor, 0.05),
-            p: 2,
+            backgroundColor: alpha(nextMilestone.tierColor, 0.04),
+            p: { xs: 1.5, sm: 2 },
             display: 'flex',
-            alignItems: 'center',
-            gap: 2,
-            flexWrap: 'wrap',
+            flexDirection: 'column',
+            gap: 1.5,
           }}
         >
           <Box
             sx={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              backgroundColor: nextMilestone.tierColor,
-              flexShrink: 0,
-            }}
-          />
-          <Box sx={{ flex: 1, minWidth: 200 }}>
-            <Typography
-              sx={{
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                color: nextMilestone.tierColor,
-              }}
-            >
-              Next: {nextMilestone.tierName} Tier
-            </Typography>
-            <Typography
-              sx={{
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: '0.75rem',
-                color: 'rgba(255, 255, 255, 0.6)',
-              }}
-            >
-              Closest requirement:{' '}
-              <Box
-                component="span"
-                sx={{ color: STATUS_COLORS.warning }}
-              >
-                {nextMilestone.closest.label}
-              </Box>{' '}
-              — {String(nextMilestone.closest.current)} /{' '}
-              {String(nextMilestone.closest.required)} (
-              {nextMilestone.closest.progress.toFixed(0)}%)
-            </Typography>
-          </Box>
-          <Typography
-            sx={{
-              fontFamily: '"JetBrains Mono", monospace',
-              fontSize: '0.7rem',
-              color: 'rgba(255, 255, 255, 0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
             }}
           >
-            {nextMilestone.remaining} requirement
-            {nextMilestone.remaining > 1 ? 's' : ''} remaining
-          </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+              }}
+            >
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  backgroundColor: nextMilestone.tierColor,
+                  flexShrink: 0,
+                  boxShadow: `0 0 6px ${nextMilestone.tierColor}`,
+                  '@keyframes pulse': {
+                    '0%, 100%': { opacity: 1 },
+                    '50%': { opacity: 0.4 },
+                  },
+                  animation: 'pulse 2s ease-in-out infinite',
+                }}
+              />
+              <Typography
+                sx={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: { xs: '0.8rem', sm: '0.85rem' },
+                  fontWeight: 700,
+                  color: nextMilestone.tierColor,
+                }}
+              >
+                Next: {nextMilestone.tierName} Tier
+              </Typography>
+            </Box>
+            <Typography
+              sx={{
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: '0.7rem',
+                color: 'rgba(255, 255, 255, 0.4)',
+              }}
+            >
+              {nextMilestone.remaining} requirement
+              {nextMilestone.remaining > 1 ? 's' : ''} left
+            </Typography>
+          </Box>
+
+          {/* Progress bar for closest requirement */}
+          <Box>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                mb: 0.5,
+              }}
+            >
+              <Typography
+                sx={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: '0.72rem',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                }}
+              >
+                {nextMilestone.closest.label}
+              </Typography>
+              <Typography
+                sx={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: '0.72rem',
+                  color: '#ffffff',
+                }}
+              >
+                {String(nextMilestone.closest.current)}{' '}
+                <Box
+                  component="span"
+                  sx={{ color: 'rgba(255, 255, 255, 0.4)' }}
+                >
+                  / {String(nextMilestone.closest.required)}
+                </Box>
+              </Typography>
+            </Box>
+            <LinearProgress
+              variant="determinate"
+              value={nextMilestone.closest.progress}
+              sx={{
+                height: 5,
+                borderRadius: 3,
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                '& .MuiLinearProgress-bar': {
+                  backgroundColor: nextMilestone.tierColor,
+                  borderRadius: 3,
+                },
+              }}
+            />
+          </Box>
         </Box>
       )}
 

@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Grid,
-  Card,
   CircularProgress,
   alpha,
 } from '@mui/material';
@@ -15,17 +14,7 @@ import {
 } from '../../api';
 import { TierCard } from './TierComponents';
 import { TIER_COLORS } from '../../theme';
-
-const TIER_LEVELS: Record<string, number> = {
-  bronze: 1,
-  silver: 2,
-  gold: 3,
-};
-
-const getTierLevel = (tier: string | undefined | null): number => {
-  if (!tier) return 0; // No tier yet - working towards bronze
-  return TIER_LEVELS[tier.toLowerCase()] || 0;
-};
+import { getTierLevel } from '../../utils';
 
 const getTierConfig = (
   tierName: string,
@@ -44,20 +33,18 @@ const getTooltipMessage = (
   isNextTier: boolean,
   config: TierConfig | undefined,
 ): string => {
-  if (!config) {
-    if (isNextTier) {
+  if (isNextTier) {
+    if (!config) {
       return `${tierName} tier unlock in progress. Continue contributing to ${tierName} tier repos to unlock this tier.`;
     }
-    const prevTier = getPreviousTierName(tierLevel);
-    return `${tierName} tier isn't unlocked yet, so contributions earn 0 points. It will only be eligible to unlock after ${prevTier} is unlocked.`;
-  }
-
-  const reqQualifiedRepos = config.requiredQualifiedUniqueRepos;
-  const reqTokenScorePerRepo = config.requiredMinTokenScorePerRepo;
-  const reqCred = (config.requiredCredibility * 100).toFixed(0);
-  const reqTokenScore = config.requiredMinTokenScore;
-
-  if (isNextTier) {
+    const reqQualifiedRepos =
+      config.requiredQualifiedUniqueRepos;
+    const reqTokenScorePerRepo =
+      config.requiredMinTokenScorePerRepo;
+    const reqCred = (
+      config.requiredCredibility * 100
+    ).toFixed(0);
+    const reqTokenScore = config.requiredMinTokenScore;
     const tokenScoreReq = reqTokenScore
       ? ` with ${reqTokenScore}+ total token score and`
       : '';
@@ -65,7 +52,7 @@ const getTooltipMessage = (
   }
 
   const prevTier = getPreviousTierName(tierLevel);
-  return `${tierName} tier isn't unlocked yet, so contributions earn 0 points. It will only be eligible to unlock after ${prevTier} is unlocked.`;
+  return `${tierName} is locked \u2014 PRs to ${tierName} repos earn 0 score. Unlock ${prevTier} first. Tiers must be unlocked in order: Bronze \u2192 Silver \u2192 Gold.`;
 };
 
 interface MinerTierPerformanceProps {
@@ -107,7 +94,7 @@ const MinerTierPerformance: React.FC<MinerTierPerformanceProps> = ({
       level: 1,
       color: TIER_COLORS.bronze,
       bgColor: alpha(TIER_COLORS.bronze, 0.05),
-      borderColor: alpha(TIER_COLORS.bronze, 0.2),
+      borderColor: alpha(TIER_COLORS.bronze, 0.4),
       stats: {
         score: minerStats.bronzeScore,
         credibility: minerStats.bronzeCredibility,
@@ -125,7 +112,7 @@ const MinerTierPerformance: React.FC<MinerTierPerformanceProps> = ({
       level: 2,
       color: TIER_COLORS.silver,
       bgColor: alpha(TIER_COLORS.silver, 0.05),
-      borderColor: alpha(TIER_COLORS.silver, 0.2),
+      borderColor: alpha(TIER_COLORS.silver, 0.4),
       stats: {
         score: minerStats.silverScore,
         credibility: minerStats.silverCredibility,
@@ -143,7 +130,7 @@ const MinerTierPerformance: React.FC<MinerTierPerformanceProps> = ({
       level: 3,
       color: TIER_COLORS.gold,
       bgColor: alpha(TIER_COLORS.gold, 0.05),
-      borderColor: alpha(TIER_COLORS.gold, 0.2),
+      borderColor: alpha(TIER_COLORS.gold, 0.4),
       stats: {
         score: minerStats.goldScore,
         credibility: minerStats.goldCredibility,
@@ -159,40 +146,22 @@ const MinerTierPerformance: React.FC<MinerTierPerformanceProps> = ({
   ];
 
   return (
-    <Card
+    <Box
       sx={{
         borderRadius: 3,
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        backgroundColor: 'transparent',
-        p: 3,
-        mb: 3,
+        border: '1px solid rgba(255, 255, 255, 0.08)',
+        p: { xs: 2.5, sm: 3 },
       }}
-      elevation={0}
     >
       <Typography
-        variant="h6"
-        sx={{
-          color: '#ffffff',
-          fontFamily: '"JetBrains Mono", monospace',
-          mb: 2.5,
-          fontWeight: 600,
-          fontSize: '1.1rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.5,
-          '&::before': {
-            content: '""',
-            width: '4px',
-            height: '20px',
-            backgroundColor: 'primary.main',
-            borderRadius: '2px',
-          },
-        }}
+        variant="sectionTitle"
+        component="p"
+        sx={{ mb: 3 }}
       >
         Tier Performance
       </Typography>
 
-      <Grid container spacing={2}>
+      <Grid container spacing={{ xs: 1.5, sm: 2 }}>
         {tiers.map((tier) => {
           const isLocked = tier.level > currentTierLevel;
           const isNextTier = tier.level === currentTierLevel + 1;
@@ -269,7 +238,7 @@ const MinerTierPerformance: React.FC<MinerTierPerformanceProps> = ({
           );
         })}
       </Grid>
-    </Card>
+    </Box>
   );
 };
 

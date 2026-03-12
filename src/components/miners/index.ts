@@ -1,4 +1,5 @@
 export { default as CredibilityChart } from './CredibilityChart';
+export { default as MinerActivityTab } from './MinerActivityTab';
 export { default as MinerContributionsTab } from './MinerContributionsTab';
 export { default as MinerDetailsTabs } from './MinerDetailsTabs';
 export { default as MinerEarningsStrip } from './MinerEarningsStrip';
@@ -6,6 +7,8 @@ export { default as MinerOverviewTab } from './MinerOverviewTab';
 export { default as MinerProfileHeader } from './MinerProfileHeader';
 export { default as MinerScoreTab } from './MinerScoreTab';
 export { default as MinerInsights } from './MinerInsights';
+export { default as MinerPRsTable } from './MinerPRsTable';
+export { default as MinerRepositoriesTable } from './MinerRepositoriesTable';
 export { default as MinerTierPerformance } from './MinerTierPerformance';
 export { default as MinerTierTab } from './MinerTierTab';
 export { default as PerformanceRadar } from './PerformanceRadar';

@@ -12,7 +12,7 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { STATUS_COLORS } from '../../theme';
 
 // Shared tooltip styling
-const tooltipSlotProps: TooltipProps['slotProps'] = {
+export const tooltipSlotProps: TooltipProps['slotProps'] = {
   tooltip: {
     sx: {
       backgroundColor: 'rgba(30, 30, 30, 0.95)',
@@ -23,6 +23,7 @@ const tooltipSlotProps: TooltipProps['slotProps'] = {
       borderRadius: '6px',
       border: '1px solid rgba(255, 255, 255, 0.1)',
       maxWidth: 240,
+      whiteSpace: 'pre-line',
     },
   },
   arrow: {
@@ -96,7 +97,7 @@ export const TierStatItem: React.FC<TierStatItemProps> = ({
     <Typography
       sx={{
         color: 'rgba(255, 255, 255, 0.5)',
-        fontSize: '0.7rem',
+        fontSize: '0.78rem',
         fontFamily: '"JetBrains Mono", monospace',
         textTransform: 'uppercase',
         display: 'flex',
@@ -120,9 +121,9 @@ export const TierStatItem: React.FC<TierStatItemProps> = ({
       <Typography
         sx={{
           color: valueColor,
-          fontSize: large ? '1.1rem' : '0.95rem',
+          fontSize: large ? '1.3rem' : '1.05rem',
           fontFamily: '"JetBrains Mono", monospace',
-          fontWeight: 600,
+          fontWeight: 700,
         }}
       >
         {value}
@@ -138,6 +139,7 @@ interface TierProgressBarProps {
   required: number | string;
   progress: number;
   tierColor: string;
+  tooltip?: string;
 }
 
 export const TierProgressBar: React.FC<TierProgressBarProps> = ({
@@ -146,8 +148,28 @@ export const TierProgressBar: React.FC<TierProgressBarProps> = ({
   required,
   progress,
   tierColor,
+  tooltip,
 }) => {
   const isComplete = progress >= 100;
+
+  const labelEl = (
+    <Typography
+      sx={{
+        color: 'rgba(255, 255, 255, 0.7)',
+        fontSize: '0.7rem',
+        fontFamily: '"JetBrains Mono", monospace',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.5,
+        cursor: tooltip ? 'pointer' : 'default',
+      }}
+    >
+      {label}
+      {tooltip && (
+        <InfoOutlinedIcon sx={{ fontSize: '0.7rem' }} />
+      )}
+    </Typography>
+  );
 
   return (
     <Box sx={{ mb: 1 }}>
@@ -158,15 +180,13 @@ export const TierProgressBar: React.FC<TierProgressBarProps> = ({
           mb: 0.5,
         }}
       >
-        <Typography
-          sx={{
-            color: 'rgba(255, 255, 255, 0.7)',
-            fontSize: '0.7rem',
-            fontFamily: '"JetBrains Mono", monospace',
-          }}
-        >
-          {label}
-        </Typography>
+        {tooltip ? (
+          <StyledTooltip title={tooltip}>
+            {labelEl}
+          </StyledTooltip>
+        ) : (
+          labelEl
+        )}
         <Typography
           sx={{
             color: isComplete ? STATUS_COLORS.success : '#ffffff',
@@ -184,12 +204,13 @@ export const TierProgressBar: React.FC<TierProgressBarProps> = ({
         variant="determinate"
         value={progress}
         sx={{
-          height: 4,
-          borderRadius: 2,
-          backgroundColor: 'rgba(255, 255, 255, 0.1)',
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: 'rgba(255, 255, 255, 0.08)',
           '& .MuiLinearProgress-bar': {
             backgroundColor: isComplete ? STATUS_COLORS.success : tierColor,
-            borderRadius: 2,
+            borderRadius: 3,
+            transition: 'transform 0.8s ease-out',
           },
         }}
       />
@@ -211,46 +232,29 @@ export const TierPRActivity: React.FC<TierPRActivityProps> = ({
   closed,
   borderColor,
 }) => (
-  <Box sx={{ pt: 1, borderTop: `1px solid ${borderColor}` }}>
+  <Box sx={{ pt: 1.5, borderTop: `1px solid ${borderColor}` }}>
     <Typography
       sx={{
         color: 'rgba(255, 255, 255, 0.5)',
         fontSize: '0.7rem',
         fontFamily: '"JetBrains Mono", monospace',
-        mb: 0.5,
+        mb: 1,
+        textTransform: 'uppercase',
       }}
     >
       PR Activity
     </Typography>
-    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-      <Typography
-        sx={{
-          color: '#ffffff',
-          fontSize: '0.8rem',
-          fontFamily: '"JetBrains Mono", monospace',
-        }}
-      >
-        Merged: {merged}
-      </Typography>
-      <Typography
-        sx={{
-          color: '#ffffff',
-          fontSize: '0.8rem',
-          fontFamily: '"JetBrains Mono", monospace',
-        }}
-      >
-        Open: {opened}
-      </Typography>
-      <Typography
-        sx={{
-          color: '#ffffff',
-          fontSize: '0.8rem',
-          fontFamily: '"JetBrains Mono", monospace',
-        }}
-      >
-        Closed: {closed}
-      </Typography>
-    </Box>
+    <Typography
+      sx={{
+        fontFamily: '"JetBrains Mono", monospace',
+        fontSize: '0.85rem',
+        color: 'rgba(255,255,255,0.6)',
+      }}
+    >
+      Merged: <Box component="span" sx={{ color: '#fff', fontWeight: 600 }}>{merged}</Box>
+      {'  '}Open: <Box component="span" sx={{ color: '#fff', fontWeight: 600 }}>{opened}</Box>
+      {'  '}Closed: <Box component="span" sx={{ color: '#fff', fontWeight: 600 }}>{closed}</Box>
+    </Typography>
   </Box>
 );
 
@@ -268,6 +272,7 @@ interface TierUnlockProgressProps {
   tierColor: string;
   borderColor: string;
   title?: string;
+  qualifiedReposTooltip?: string;
 }
 
 export const TierUnlockProgress: React.FC<TierUnlockProgressProps> = ({
@@ -283,6 +288,7 @@ export const TierUnlockProgress: React.FC<TierUnlockProgressProps> = ({
   tierColor,
   borderColor,
   title = 'Unlock Progress',
+  qualifiedReposTooltip,
 }) => (
   <Box
     sx={{
@@ -319,6 +325,7 @@ export const TierUnlockProgress: React.FC<TierUnlockProgressProps> = ({
       required={requiredQualifiedRepos}
       progress={qualifiedReposProgress}
       tierColor={tierColor}
+      tooltip={qualifiedReposTooltip}
     />
 
     <TierProgressBar
@@ -353,6 +360,7 @@ interface TierCardProps {
   isLocked: boolean;
   isNextTier: boolean;
   tooltipMessage?: string;
+  qualifiedReposTooltip?: string;
   unlockProgress?: {
     tokenScore: number;
     requiredTokenScore: number | null;
@@ -375,6 +383,7 @@ export const TierCard: React.FC<TierCardProps> = ({
   isLocked,
   isNextTier,
   tooltipMessage,
+  qualifiedReposTooltip,
   unlockProgress,
 }) => {
   const opened = (stats.total || 0) - (stats.merged || 0) - (stats.closed || 0);
@@ -382,24 +391,24 @@ export const TierCard: React.FC<TierCardProps> = ({
   const getFilterStyles = () => {
     if (!isLocked) return { opacity: 1, filter: 'none' };
     if (isNextTier) return { opacity: 0.85, filter: 'grayscale(35%)' };
-    return { opacity: 0.4, filter: 'grayscale(85%)' };
+    return { opacity: 0.55, filter: 'grayscale(50%)' };
   };
 
   const getHoverStyles = () => {
     if (!isLocked) return {};
     if (isNextTier) return { opacity: 0.95, filter: 'grayscale(15%)' };
-    return { opacity: 0.5, filter: 'grayscale(70%)' };
+    return { opacity: 0.65, filter: 'grayscale(35%)' };
   };
 
   const getBorderStyles = () => {
     if (!isLocked) {
       return {
-        border: `1.5px solid ${color}`,
-        boxShadow: `0 0 12px ${color}40, inset 0 0 8px ${color}15`,
+        border: `2px solid ${color}50`,
+        boxShadow: `0 0 8px ${color}20`,
       };
     }
     return {
-      border: `1px solid ${borderColor}`,
+      border: `2px solid ${borderColor}`,
     };
   };
 
@@ -409,14 +418,20 @@ export const TierCard: React.FC<TierCardProps> = ({
     <Box
       sx={{
         backgroundColor: bgColor,
-        borderRadius: 2,
+        borderRadius: 2.5,
         ...getBorderStyles(),
-        p: 2,
+        p: { xs: 1.5, sm: 2.5 },
         height: '100%',
         ...filterStyles,
         position: 'relative',
-        transition: 'all 0.2s ease',
-        '&:hover': getHoverStyles(),
+        transition: 'all 0.25s ease',
+        '&:hover': {
+          ...getHoverStyles(),
+          ...(!isLocked && {
+            transform: 'translateY(-2px)',
+            boxShadow: `0 0 16px ${color}35`,
+          }),
+        },
       }}
     >
       {isLocked && (
@@ -502,6 +517,7 @@ export const TierCard: React.FC<TierCardProps> = ({
             tierColor={color}
             borderColor={borderColor}
             title={isLocked ? 'Unlock Progress' : 'Maintenance Requirements'}
+            qualifiedReposTooltip={qualifiedReposTooltip}
           />
         )}
       </Stack>

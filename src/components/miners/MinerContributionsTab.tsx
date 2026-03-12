@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -8,26 +8,32 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Avatar,
+  Chip,
   Button,
-  Collapse,
-  IconButton,
   InputBase,
+  Tooltip,
   alpha,
 } from '@mui/material';
 import {
-  KeyboardArrowDown as ExpandIcon,
-  KeyboardArrowRight as CollapseIcon,
   Search as SearchIcon,
+  NavigateBefore as PrevIcon,
+  NavigateNext as NextIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import {
   type CommitLog,
   type Repository,
 } from '../../api';
-import theme, { TIER_COLORS } from '../../theme';
-
-const AUTO_EXPAND_THRESHOLD = 10;
+import theme, { STATUS_COLORS, TIER_COLORS } from '../../theme';
+import {
+  getTierColor,
+  matchesStatus,
+  getZeroScoreReason,
+  type StatusFilter,
+} from '../../utils';
+import { tooltipSlotProps } from './TierComponents';
 
 interface MinerContributionsTabProps {
   prs?: CommitLog[];
@@ -35,46 +41,11 @@ interface MinerContributionsTabProps {
   githubId: string;
 }
 
-type StatusFilter = 'all' | 'open' | 'merged' | 'closed';
 type TierFilter = 'all' | 'bronze' | 'silver' | 'gold';
-type SortField = 'score' | 'date' | 'lines' | 'repo';
+type SortField = 'number' | 'score' | 'lines' | 'date' | 'repo';
 type SortDir = 'asc' | 'desc';
 
-const getTierColor = (tier: string): string => {
-  switch (tier?.toLowerCase()) {
-    case 'gold':
-      return TIER_COLORS.gold;
-    case 'silver':
-      return TIER_COLORS.silver;
-    case 'bronze':
-      return TIER_COLORS.bronze;
-    default:
-      return 'transparent';
-  }
-};
-
-const matchesStatus = (
-  pr: CommitLog,
-  filter: StatusFilter,
-): boolean => {
-  if (filter === 'all') return true;
-  if (filter === 'open')
-    return pr.prState === 'OPEN' || (!pr.prState && !pr.mergedAt);
-  if (filter === 'merged')
-    return !!pr.mergedAt || pr.prState === 'MERGED';
-  if (filter === 'closed')
-    return pr.prState === 'CLOSED' && !pr.mergedAt;
-  return true;
-};
-
-interface RepoGroup {
-  name: string;
-  tier: string;
-  weight: number;
-  prCount: number;
-  totalScore: number;
-  prs: CommitLog[];
-}
+const PAGE_SIZE = 20;
 
 const FilterButton: React.FC<{
   label: string;
@@ -120,43 +91,36 @@ const FilterButton: React.FC<{
   </Button>
 );
 
+const getScoreTooltip = (pr: CommitLog): string | null => {
+  const score = parseFloat(pr.score || '0');
+  if (score === 0) return getZeroScoreReason(pr);
+  const base = parseFloat(pr.baseScore || '0');
+  if (!pr.mergedAt || base <= 0) return null;
+  const parts: string[] = [`Base: ${base.toFixed(2)}`];
+  if (pr.tokenScore != null)
+    parts.push(`Tokens: ${Number(pr.tokenScore).toFixed(2)}`);
+  if (pr.rawCredibility != null)
+    parts.push(`Cred: ${(pr.rawCredibility * 100).toFixed(0)}%`);
+  if (pr.credibilityScalar != null)
+    parts.push(`Cred scalar: ${pr.credibilityScalar.toFixed(2)}x`);
+  return parts.join(' \u00b7 ');
+};
+
 const MinerContributionsTab: React.FC<MinerContributionsTabProps> = ({
   prs,
   repos,
   githubId,
 }) => {
   const navigate = useNavigate();
+  const username = prs?.[0]?.author || githubId;
+
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>('all');
   const [tierFilter, setTierFilter] = useState<TierFilter>('all');
-  const [sortField, setSortField] = useState<SortField>('score');
+  const [sortField, setSortField] = useState<SortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [expandedRepos, setExpandedRepos] = useState<Set<string>>(
-    new Set(),
-  );
-  const [expandedPRs, setExpandedPRs] = useState<Set<string>>(
-    new Set(),
-  );
-  const [initialized, setInitialized] = useState(false);
-
-  const username = prs?.[0]?.author || githubId;
-
-  // Build repo maps
-  const repoWeights = useMemo(() => {
-    const map = new Map<string, number>();
-    if (Array.isArray(repos)) {
-      repos.forEach((repo) => {
-        if (repo?.fullName) {
-          map.set(
-            repo.fullName,
-            parseFloat(repo.weight || '0'),
-          );
-        }
-      });
-    }
-    return map;
-  }, [repos]);
+  const [page, setPage] = useState(0);
 
   const repoTiers = useMemo(() => {
     const map = new Map<string, string>();
@@ -170,7 +134,20 @@ const MinerContributionsTab: React.FC<MinerContributionsTabProps> = ({
     return map;
   }, [repos]);
 
-  // Status counts
+  const handleSort = useCallback(
+    (field: SortField) => {
+      if (sortField === field) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortField(field);
+        setSortDir('desc');
+      }
+      setPage(0);
+    },
+    [sortField],
+  );
+
+  // Status counts (unfiltered)
   const statusCounts = useMemo(() => {
     if (!prs) return { all: 0, open: 0, merged: 0, closed: 0 };
     return {
@@ -188,162 +165,88 @@ const MinerContributionsTab: React.FC<MinerContributionsTabProps> = ({
     };
   }, [prs]);
 
-  // Group PRs by repository
-  const repoGroups = useMemo(() => {
-    if (!prs || prs.length === 0) return [];
+  // Tier counts (unfiltered)
+  const tierCounts = useMemo(() => {
+    if (!prs)
+      return { all: 0, gold: 0, silver: 0, bronze: 0 };
+    const counts = { all: prs.length, gold: 0, silver: 0, bronze: 0 };
+    prs.forEach((pr) => {
+      const tier = (
+        pr.tier || repoTiers.get(pr.repository) || ''
+      ).toLowerCase();
+      if (tier === 'gold') counts.gold++;
+      else if (tier === 'silver') counts.silver++;
+      else if (tier === 'bronze') counts.bronze++;
+    });
+    return counts;
+  }, [prs, repoTiers]);
 
-    const searchLower = search.toLowerCase();
-    const filtered = prs.filter((pr) => {
-      if (!matchesStatus(pr, statusFilter)) return false;
-      if (
-        tierFilter !== 'all' &&
-        (repoTiers.get(pr.repository) || '').toLowerCase() !==
-          tierFilter
-      )
+  // Filter
+  const filteredPRs = useMemo(() => {
+    if (!prs) return [];
+    const q = search.toLowerCase();
+    return prs.filter((pr) => {
+      if (!matchesStatus(pr.prState, pr.mergedAt, statusFilter))
         return false;
+      if (tierFilter !== 'all') {
+        const tier = (
+          pr.tier || repoTiers.get(pr.repository) || ''
+        ).toLowerCase();
+        if (tier !== tierFilter) return false;
+      }
       if (
-        search &&
-        !pr.pullRequestTitle.toLowerCase().includes(searchLower) &&
-        !pr.repository.toLowerCase().includes(searchLower) &&
+        q &&
+        !pr.pullRequestTitle.toLowerCase().includes(q) &&
+        !pr.repository.toLowerCase().includes(q) &&
         !String(pr.pullRequestNumber).includes(search)
       )
         return false;
       return true;
     });
+  }, [prs, statusFilter, tierFilter, repoTiers, search]);
 
-    const groupMap = new Map<string, RepoGroup>();
-    filtered.forEach((pr) => {
-      const existing = groupMap.get(pr.repository);
-      if (existing) {
-        existing.prCount++;
-        existing.totalScore += parseFloat(pr.score || '0');
-        existing.prs.push(pr);
-      } else {
-        groupMap.set(pr.repository, {
-          name: pr.repository,
-          tier: repoTiers.get(pr.repository) || '',
-          weight: repoWeights.get(pr.repository) || 0,
-          prCount: 1,
-          totalScore: parseFloat(pr.score || '0'),
-          prs: [pr],
-        });
-      }
-    });
-
-    const groups = Array.from(groupMap.values());
-
-    // Sort groups
-    groups.sort((a, b) => {
+  // Sort
+  const sortedPRs = useMemo(() => {
+    const sorted = [...filteredPRs];
+    sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
+        case 'number':
+          cmp = a.pullRequestNumber - b.pullRequestNumber;
+          break;
         case 'score':
-          cmp = a.totalScore - b.totalScore;
+          cmp =
+            parseFloat(a.score || '0') -
+            parseFloat(b.score || '0');
           break;
-        case 'date': {
-          const aDate = Math.max(
-            ...a.prs.map((p) =>
-              p.mergedAt
-                ? new Date(p.mergedAt).getTime()
-                : new Date(p.prCreatedAt).getTime(),
-            ),
-          );
-          const bDate = Math.max(
-            ...b.prs.map((p) =>
-              p.mergedAt
-                ? new Date(p.mergedAt).getTime()
-                : new Date(p.prCreatedAt).getTime(),
-            ),
-          );
-          cmp = aDate - bDate;
-          break;
-        }
         case 'lines':
           cmp =
-            a.prs.reduce(
-              (s, p) => s + p.additions + p.deletions,
-              0,
-            ) -
-            b.prs.reduce(
-              (s, p) => s + p.additions + p.deletions,
-              0,
-            );
+            a.additions +
+            a.deletions -
+            (b.additions + b.deletions);
           break;
         case 'repo':
-          cmp = a.name.localeCompare(b.name);
+          cmp = a.repository.localeCompare(b.repository);
           break;
+        case 'date': {
+          const da = a.mergedAt || a.prCreatedAt || '';
+          const db = b.mergedAt || b.prCreatedAt || '';
+          cmp = da.localeCompare(db);
+          break;
+        }
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
+    return sorted;
+  }, [filteredPRs, sortField, sortDir]);
 
-    // Sort PRs within each group by score desc
-    groups.forEach((g) => {
-      g.prs.sort(
-        (a, b) =>
-          parseFloat(b.score || '0') - parseFloat(a.score || '0'),
-      );
-    });
+  // Paginate
+  const pagedPRs = useMemo(() => {
+    const start = page * PAGE_SIZE;
+    return sortedPRs.slice(start, start + PAGE_SIZE);
+  }, [sortedPRs, page]);
 
-    return groups;
-  }, [
-    prs,
-    search,
-    statusFilter,
-    tierFilter,
-    repoTiers,
-    repoWeights,
-    sortField,
-    sortDir,
-  ]);
-
-  // Auto-expand repos with < threshold PRs on first render
-  useEffect(() => {
-    if (!initialized && repoGroups.length > 0) {
-      const autoExpand = new Set<string>();
-      repoGroups.forEach((g) => {
-        if (g.prCount < AUTO_EXPAND_THRESHOLD) {
-          autoExpand.add(g.name);
-        }
-      });
-      setExpandedRepos(autoExpand);
-      setInitialized(true);
-    }
-  }, [repoGroups, initialized]);
-
-  const toggleRepo = useCallback((name: string) => {
-    setExpandedRepos((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }, []);
-
-  const togglePR = useCallback(
-    (key: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      setExpandedPRs((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('desc');
-    }
-  };
-
-  const totalFiltered = repoGroups.reduce(
-    (s, g) => s + g.prCount,
-    0,
-  );
+  const totalPages = Math.ceil(sortedPRs.length / PAGE_SIZE);
 
   if (!prs || prs.length === 0) {
     return (
@@ -362,7 +265,7 @@ const MinerContributionsTab: React.FC<MinerContributionsTabProps> = ({
             fontSize: '0.9rem',
           }}
         >
-          No contributions found
+          No pull requests found
         </Typography>
       </Box>
     );
@@ -382,740 +285,751 @@ const MinerContributionsTab: React.FC<MinerContributionsTabProps> = ({
           p: { xs: 1.5, sm: 2 },
           borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
           display: 'flex',
-          flexWrap: 'wrap',
+          flexDirection: 'column',
           gap: 1.5,
-          alignItems: 'center',
         }}
       >
-        {/* Search */}
+        {/* Header + count */}
         <Box
           sx={{
             display: 'flex',
             alignItems: 'center',
-            backgroundColor: 'rgba(255, 255, 255, 0.05)',
-            borderRadius: '6px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            px: 1.5,
-            flex: { xs: '1 1 100%', sm: '0 1 240px' },
+            justifyContent: 'space-between',
           }}
         >
-          <SearchIcon
-            sx={{
-              fontSize: '1rem',
-              color: 'rgba(255,255,255,0.4)',
-              mr: 1,
-            }}
-          />
-          <InputBase
-            placeholder="Search PRs or repos..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+          <Typography variant="sectionTitle">
+            Pull Requests
+          </Typography>
+          <Typography
             sx={{
               fontFamily: '"JetBrains Mono", monospace',
-              fontSize: '0.8rem',
-              color: '#ffffff',
-              flex: 1,
-              py: 0.5,
+              fontSize: '0.75rem',
+              color: 'rgba(255,255,255,0.4)',
             }}
-          />
+          >
+            {filteredPRs.length}
+            {statusFilter !== 'all' ||
+            tierFilter !== 'all' ||
+            search.trim()
+              ? ` of ${prs.length}`
+              : ''}{' '}
+            PRs
+          </Typography>
         </Box>
 
-        {/* Status Filters */}
-        <Box sx={{ display: 'flex', gap: 0.5 }}>
-          <FilterButton
-            label="All"
-            count={statusCounts.all}
-            color={theme.palette.status.neutral}
-            selected={statusFilter === 'all'}
-            onClick={() => setStatusFilter('all')}
-          />
-          <FilterButton
-            label="Open"
-            count={statusCounts.open}
-            color={theme.palette.status.open}
-            selected={statusFilter === 'open'}
-            onClick={() => setStatusFilter('open')}
-          />
-          <FilterButton
-            label="Merged"
-            count={statusCounts.merged}
-            color={theme.palette.status.merged}
-            selected={statusFilter === 'merged'}
-            onClick={() => setStatusFilter('merged')}
-          />
-          <FilterButton
-            label="Closed"
-            count={statusCounts.closed}
-            color={theme.palette.status.closed}
-            selected={statusFilter === 'closed'}
-            onClick={() => setStatusFilter('closed')}
-          />
-        </Box>
-
-        {/* Tier Filters */}
+        {/* Filters row */}
         <Box
           sx={{
             display: 'flex',
-            gap: 0.5,
-            borderLeft: '1px solid rgba(255,255,255,0.1)',
-            pl: 1,
+            flexWrap: { xs: 'nowrap', sm: 'wrap' },
+            gap: { xs: 1, sm: 1.5 },
+            alignItems: 'center',
+            overflowX: { xs: 'auto', sm: 'visible' },
+            WebkitOverflowScrolling: 'touch',
+            '&::-webkit-scrollbar': { height: 0 },
+            pb: { xs: 0.5, sm: 0 },
           }}
         >
-          <FilterButton
-            label="All"
-            color="rgba(255,255,255,0.4)"
-            selected={tierFilter === 'all'}
-            onClick={() => setTierFilter('all')}
-          />
-          {(['bronze', 'silver', 'gold'] as TierFilter[]).map(
-            (t) => (
-              <FilterButton
-                key={t}
-                label={t.charAt(0).toUpperCase() + t.slice(1)}
-                color={getTierColor(t)}
-                selected={tierFilter === t}
-                onClick={() => setTierFilter(t)}
-              />
-            ),
-          )}
-        </Box>
+          {/* Search */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+              borderRadius: '6px',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              px: 1.5,
+              flex: { xs: '1 1 100%', sm: '0 1 260px' },
+              mr: 'auto',
+            }}
+          >
+            <SearchIcon
+              sx={{
+                fontSize: '1rem',
+                color: 'rgba(255,255,255,0.4)',
+                mr: 1,
+              }}
+            />
+            <InputBase
+              placeholder="Search by title, repo, or PR #..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+              sx={{
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: '0.8rem',
+                color: '#ffffff',
+                flex: 1,
+                py: 0.5,
+              }}
+            />
+          </Box>
 
-        {/* Count */}
-        <Typography
-          sx={{
-            fontFamily: '"JetBrains Mono", monospace',
-            fontSize: '0.7rem',
-            color: 'rgba(255,255,255,0.4)',
-            ml: 'auto',
-          }}
-        >
-          {totalFiltered} PR{totalFiltered !== 1 ? 's' : ''} in{' '}
-          {repoGroups.length} repo
-          {repoGroups.length !== 1 ? 's' : ''}
-        </Typography>
+          {/* Status Filters */}
+          <Box sx={{ display: 'flex', gap: 0.5, flexShrink: 0 }}>
+            <FilterButton
+              label="All"
+              count={statusCounts.all}
+              color={theme.palette.status.neutral}
+              selected={statusFilter === 'all'}
+              onClick={() => {
+                setStatusFilter('all');
+                setPage(0);
+              }}
+            />
+            <FilterButton
+              label="Open"
+              count={statusCounts.open}
+              color={theme.palette.status.open}
+              selected={statusFilter === 'open'}
+              onClick={() => {
+                setStatusFilter('open');
+                setPage(0);
+              }}
+            />
+            <FilterButton
+              label="Merged"
+              count={statusCounts.merged}
+              color={theme.palette.status.merged}
+              selected={statusFilter === 'merged'}
+              onClick={() => {
+                setStatusFilter('merged');
+                setPage(0);
+              }}
+            />
+            <FilterButton
+              label="Closed"
+              count={statusCounts.closed}
+              color={theme.palette.status.closed}
+              selected={statusFilter === 'closed'}
+              onClick={() => {
+                setStatusFilter('closed');
+                setPage(0);
+              }}
+            />
+          </Box>
+
+          {/* Tier Filters */}
+          <Box
+            sx={{
+              display: 'flex',
+              gap: 0.5,
+              flexShrink: 0,
+              borderLeft: '1px solid rgba(255,255,255,0.1)',
+              pl: 1,
+            }}
+          >
+            <FilterButton
+              label="All"
+              count={tierCounts.all}
+              color="rgba(255,255,255,0.4)"
+              selected={tierFilter === 'all'}
+              onClick={() => {
+                setTierFilter('all');
+                setPage(0);
+              }}
+            />
+            <FilterButton
+              label="Gold"
+              count={tierCounts.gold}
+              color={TIER_COLORS.gold}
+              selected={tierFilter === 'gold'}
+              onClick={() => {
+                setTierFilter('gold');
+                setPage(0);
+              }}
+            />
+            <FilterButton
+              label="Silver"
+              count={tierCounts.silver}
+              color={TIER_COLORS.silver}
+              selected={tierFilter === 'silver'}
+              onClick={() => {
+                setTierFilter('silver');
+                setPage(0);
+              }}
+            />
+            <FilterButton
+              label="Bronze"
+              count={tierCounts.bronze}
+              color={TIER_COLORS.bronze}
+              selected={tierFilter === 'bronze'}
+              onClick={() => {
+                setTierFilter('bronze');
+                setPage(0);
+              }}
+            />
+          </Box>
+        </Box>
       </Box>
 
       {/* Table */}
-      <TableContainer
-        sx={{
-          maxHeight: { xs: '500px', sm: '600px' },
-          overflowY: 'auto',
-          '&::-webkit-scrollbar': {
-            width: '8px',
-          },
-          '&::-webkit-scrollbar-track': {
-            backgroundColor: 'transparent',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '4px',
-            '&:hover': {
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-            },
-          },
-        }}
-      >
-        <Table stickyHeader size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ ...headerStyle, width: 40 }} />
-              <TableCell sx={headerStyle}>PR</TableCell>
-              <TableCell sx={headerStyle}>Title</TableCell>
-              <TableCell
-                align="right"
-                sx={{
-                  ...headerStyle,
-                  display: { xs: 'none', md: 'table-cell' },
-                }}
-              >
-                +/-
-              </TableCell>
-              <TableCell
-                align="right"
-                sx={{
-                  ...headerStyle,
-                  cursor: 'pointer',
-                  '&:hover': {
-                    color: 'rgba(255,255,255,0.9)',
-                  },
-                }}
-                onClick={() => handleSort('score')}
-              >
-                Score{' '}
-                {sortField === 'score'
-                  ? sortDir === 'desc'
-                    ? '\u25BC'
-                    : '\u25B2'
-                  : ''}
-              </TableCell>
-              <TableCell
-                align="right"
-                sx={{
-                  ...headerStyle,
-                  display: { xs: 'none', sm: 'table-cell' },
-                  cursor: 'pointer',
-                  '&:hover': {
-                    color: 'rgba(255,255,255,0.9)',
-                  },
-                }}
-                onClick={() => handleSort('date')}
-              >
-                Status{' '}
-                {sortField === 'date'
-                  ? sortDir === 'desc'
-                    ? '\u25BC'
-                    : '\u25B2'
-                  : ''}
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {repoGroups.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  sx={{
-                    textAlign: 'center',
-                    py: 4,
-                    color: 'rgba(255,255,255,0.5)',
-                    fontFamily: '"JetBrains Mono", monospace',
-                    fontSize: '0.85rem',
-                    borderBottom:
-                      '1px solid rgba(255,255,255,0.1)',
-                  }}
-                >
-                  No PRs match current filters
-                </TableCell>
-              </TableRow>
-            ) : (
-              repoGroups.map((group) => {
-                const isExpanded = expandedRepos.has(group.name);
-                return (
-                  <React.Fragment key={group.name}>
-                    {/* Repo Group Header */}
+      {pagedPRs.length === 0 ? (
+        <Box sx={{ textAlign: 'center', py: 8 }}>
+          <Typography
+            sx={{
+              color: 'rgba(255,255,255,0.5)',
+              fontFamily: '"JetBrains Mono", monospace',
+              fontSize: '0.9rem',
+            }}
+          >
+            No PRs match current filters
+          </Typography>
+        </Box>
+      ) : (
+        <>
+          <TableContainer
+            sx={{
+              overflowY: 'auto',
+              overflowX: 'auto',
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                backgroundColor: 'transparent',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                borderRadius: '4px',
+                '&:hover': {
+                  backgroundColor: 'rgba(255,255,255,0.2)',
+                },
+              },
+            }}
+          >
+            <Table
+              stickyHeader
+              sx={{
+                tableLayout: 'fixed',
+                minWidth: '700px',
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  <TableCell
+                    sx={{ ...headerCellSx, width: '8%' }}
+                  >
+                    <TableSortLabel
+                      active={sortField === 'number'}
+                      direction={
+                        sortField === 'number'
+                          ? sortDir
+                          : 'desc'
+                      }
+                      onClick={() => handleSort('number')}
+                      sx={sortLabelSx}
+                    >
+                      PR #
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell
+                    sx={{ ...headerCellSx, width: '27%' }}
+                  >
+                    Title
+                  </TableCell>
+                  <TableCell
+                    sx={{ ...headerCellSx, width: '25%' }}
+                  >
+                    <TableSortLabel
+                      active={sortField === 'repo'}
+                      direction={
+                        sortField === 'repo'
+                          ? sortDir
+                          : 'asc'
+                      }
+                      onClick={() => handleSort('repo')}
+                      sx={sortLabelSx}
+                    >
+                      Repository
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{ ...headerCellSx, width: '12%' }}
+                  >
+                    <TableSortLabel
+                      active={sortField === 'lines'}
+                      direction={
+                        sortField === 'lines'
+                          ? sortDir
+                          : 'desc'
+                      }
+                      onClick={() => handleSort('lines')}
+                      sx={sortLabelSx}
+                    >
+                      +/-
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{ ...headerCellSx, width: '13%' }}
+                  >
+                    <TableSortLabel
+                      active={sortField === 'score'}
+                      direction={
+                        sortField === 'score'
+                          ? sortDir
+                          : 'desc'
+                      }
+                      onClick={() => handleSort('score')}
+                      sx={sortLabelSx}
+                    >
+                      Score
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{ ...headerCellSx, width: '15%' }}
+                  >
+                    <TableSortLabel
+                      active={sortField === 'date'}
+                      direction={
+                        sortField === 'date'
+                          ? sortDir
+                          : 'desc'
+                      }
+                      onClick={() => handleSort('date')}
+                      sx={sortLabelSx}
+                    >
+                      Date
+                    </TableSortLabel>
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {pagedPRs.map((pr, index) => {
+                  const scoreTooltip = getScoreTooltip(pr);
+                  const scoreVal = parseFloat(
+                    pr.score || '0',
+                  );
+                  const tierColor = getTierColor(
+                    pr.tier ||
+                      repoTiers.get(pr.repository) ||
+                      '',
+                  );
+
+                  return (
                     <TableRow
-                      onClick={() => toggleRepo(group.name)}
+                      key={`${pr.repository}-${pr.pullRequestNumber}-${index}`}
+                      onClick={() =>
+                        navigate(
+                          `/miners/pr?repo=${encodeURIComponent(pr.repository)}&number=${pr.pullRequestNumber}`,
+                          {
+                            state: {
+                              backLabel: `Back to ${username}`,
+                            },
+                          },
+                        )
+                      }
                       sx={{
                         cursor: 'pointer',
-                        backgroundColor:
-                          'rgba(255, 255, 255, 0.03)',
                         '&:hover': {
                           backgroundColor:
-                            'rgba(255, 255, 255, 0.06)',
+                            'rgba(255,255,255,0.04)',
                         },
-                        transition: 'background-color 0.2s',
+                        transition: 'all 0.2s',
                       }}
                     >
-                      <TableCell sx={bodyCellStyle}>
-                        <IconButton
-                          size="small"
+                      {/* PR # */}
+                      <TableCell sx={bodyCellSx}>
+                        <Box
+                          component="a"
+                          href={`https://github.com/${pr.repository}/pull/${pr.pullRequestNumber}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) =>
+                            e.stopPropagation()
+                          }
                           sx={{
-                            color: 'rgba(255,255,255,0.5)',
-                            p: 0.5,
+                            color: 'inherit',
+                            textDecoration: 'none',
+                            fontWeight: 500,
                           }}
                         >
-                          {isExpanded ? (
-                            <ExpandIcon fontSize="small" />
-                          ) : (
-                            <CollapseIcon fontSize="small" />
-                          )}
-                        </IconButton>
+                          #{pr.pullRequestNumber}
+                        </Box>
                       </TableCell>
-                      <TableCell
-                        colSpan={3}
-                        sx={bodyCellStyle}
-                      >
+
+                      {/* Title */}
+                      <TableCell sx={bodyCellSx}>
                         <Box
                           sx={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 1.5,
+                            gap: 1,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <Typography
+                            sx={{
+                              fontFamily:
+                                '"JetBrains Mono", monospace',
+                              fontSize: {
+                                xs: '0.75rem',
+                                sm: '0.85rem',
+                              },
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {pr.pullRequestTitle}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+
+                      {/* Repository */}
+                      <TableCell sx={bodyCellSx}>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            overflow: 'hidden',
                           }}
                         >
                           <Avatar
-                            src={`https://avatars.githubusercontent.com/${group.name.split('/')[0]}`}
-                            alt={group.name.split('/')[0]}
+                            src={`https://avatars.githubusercontent.com/${pr.repository.split('/')[0]}`}
+                            alt={
+                              pr.repository.split('/')[0]
+                            }
                             sx={{
                               width: 20,
                               height: 20,
+                              flexShrink: 0,
                               border:
-                                '1px solid rgba(255, 255, 255, 0.2)',
+                                '1px solid rgba(255,255,255,0.2)',
                             }}
                           />
-                          {group.tier && (
+                          {tierColor !== 'transparent' && (
                             <Box
                               sx={{
                                 width: 6,
                                 height: 6,
                                 borderRadius: '50%',
-                                backgroundColor:
-                                  getTierColor(group.tier),
+                                backgroundColor: tierColor,
                                 flexShrink: 0,
                               }}
-                              title={`${group.tier} tier`}
                             />
                           )}
-                          <Typography
+                          <Box
                             component="span"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(
-                                `/miners/repository?name=${encodeURIComponent(group.name)}`,
-                                {
-                                  state: {
-                                    backLabel: `Back to ${username}`,
-                                  },
-                                },
-                              );
-                            }}
                             sx={{
                               fontFamily:
                                 '"JetBrains Mono", monospace',
-                              fontSize: '0.85rem',
-                              fontWeight: 600,
-                              '&:hover': {
-                                color: 'primary.main',
-                                textDecoration: 'underline',
+                              fontSize: {
+                                xs: '0.75rem',
+                                sm: '0.85rem',
                               },
-                              transition: 'color 0.2s',
+                              wordBreak: 'break-word',
+                              lineHeight: 1.3,
                             }}
                           >
-                            {group.name}
-                          </Typography>
-                          <Typography
-                            sx={{
-                              fontFamily:
-                                '"JetBrains Mono", monospace',
-                              fontSize: '0.7rem',
-                              color: 'rgba(255,255,255,0.4)',
-                            }}
-                          >
-                            {group.prCount} PR
-                            {group.prCount !== 1 ? 's' : ''}
-                          </Typography>
-                          {group.weight > 0 && (
+                            {pr.repository}
+                          </Box>
+                        </Box>
+                      </TableCell>
+
+                      {/* +/- */}
+                      <TableCell
+                        align="right"
+                        sx={bodyCellSx}
+                      >
+                        <Box
+                          component="span"
+                          sx={{
+                            color:
+                              theme.palette.diff.additions,
+                            mr: 1,
+                            fontFamily:
+                              '"JetBrains Mono", monospace',
+                          }}
+                        >
+                          +{pr.additions}
+                        </Box>
+                        <Box
+                          component="span"
+                          sx={{
+                            color:
+                              theme.palette.diff.deletions,
+                            fontFamily:
+                              '"JetBrains Mono", monospace',
+                          }}
+                        >
+                          -{pr.deletions}
+                        </Box>
+                      </TableCell>
+
+                      {/* Score */}
+                      <TableCell
+                        align="right"
+                        sx={bodyCellSx}
+                      >
+                        <Box>
+                          {pr.prState === 'CLOSED' &&
+                          !pr.mergedAt ? (
                             <Typography
                               sx={{
                                 fontFamily:
                                   '"JetBrains Mono", monospace',
-                                fontSize: '0.65rem',
+                                fontSize: '0.8rem',
+                                fontWeight: 600,
                                 color:
-                                  'rgba(255,255,255,0.3)',
-                                display: {
-                                  xs: 'none',
-                                  sm: 'block',
-                                },
+                                  'rgba(255,255,255,0.25)',
                               }}
                             >
-                              w:{group.weight.toFixed(2)}
+                              -
+                            </Typography>
+                          ) : !pr.mergedAt &&
+                            pr.collateralScore ? (
+                            <>
+                              <Typography
+                                sx={{
+                                  fontFamily:
+                                    '"JetBrains Mono", monospace',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 600,
+                                  color: '#fb923c',
+                                }}
+                              >
+                                {parseFloat(
+                                  pr.collateralScore,
+                                ).toFixed(4)}
+                              </Typography>
+                              <Typography
+                                sx={{
+                                  fontFamily:
+                                    '"JetBrains Mono", monospace',
+                                  fontSize: '0.6rem',
+                                  color:
+                                    'rgba(255,255,255,0.4)',
+                                }}
+                              >
+                                Collateral
+                              </Typography>
+                            </>
+                          ) : scoreTooltip ? (
+                            <Tooltip
+                              title={scoreTooltip}
+                              arrow
+                              placement="left"
+                              slotProps={tooltipSlotProps}
+                            >
+                              <Typography
+                                sx={{
+                                  fontFamily:
+                                    '"JetBrains Mono", monospace',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  color:
+                                    scoreVal === 0 &&
+                                    pr.mergedAt
+                                      ? STATUS_COLORS.warning
+                                      : undefined,
+                                }}
+                              >
+                                {scoreVal.toFixed(4)}
+                              </Typography>
+                            </Tooltip>
+                          ) : (
+                            <Typography
+                              sx={{
+                                fontFamily:
+                                  '"JetBrains Mono", monospace',
+                                fontSize: '0.8rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {scoreVal.toFixed(4)}
                             </Typography>
                           )}
                         </Box>
                       </TableCell>
+
+                      {/* Date */}
                       <TableCell
                         align="right"
-                        sx={bodyCellStyle}
-                      >
-                        <Typography
-                          sx={{
-                            fontFamily:
-                              '"JetBrains Mono", monospace',
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                          }}
-                        >
-                          {group.totalScore.toFixed(4)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell
                         sx={{
-                          ...bodyCellStyle,
-                          display: {
-                            xs: 'none',
-                            sm: 'table-cell',
-                          },
+                          ...bodyCellSx,
+                          color: 'rgba(255,255,255,0.6)',
                         }}
-                      />
+                      >
+                        {pr.mergedAt ? (
+                          <Chip
+                            label={new Date(
+                              pr.mergedAt,
+                            ).toLocaleDateString()}
+                            size="small"
+                            sx={{
+                              fontFamily:
+                                '"JetBrains Mono", monospace',
+                              fontSize: '0.7rem',
+                              height: 22,
+                              backgroundColor: alpha(
+                                STATUS_COLORS.merged,
+                                0.12,
+                              ),
+                              color: STATUS_COLORS.merged,
+                              border: 'none',
+                            }}
+                          />
+                        ) : pr.prState === 'CLOSED' ? (
+                          <Chip
+                            label="Closed"
+                            size="small"
+                            sx={{
+                              fontFamily:
+                                '"JetBrains Mono", monospace',
+                              fontSize: '0.7rem',
+                              height: 22,
+                              backgroundColor: alpha(
+                                STATUS_COLORS.closed,
+                                0.12,
+                              ),
+                              color: STATUS_COLORS.closed,
+                              border: 'none',
+                            }}
+                          />
+                        ) : (
+                          <Chip
+                            label="Open"
+                            size="small"
+                            sx={{
+                              fontFamily:
+                                '"JetBrains Mono", monospace',
+                              fontSize: '0.7rem',
+                              height: 22,
+                              backgroundColor: alpha(
+                                STATUS_COLORS.open,
+                                0.12,
+                              ),
+                              color: STATUS_COLORS.open,
+                              border: 'none',
+                            }}
+                          />
+                        )}
+                      </TableCell>
                     </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
-                    {/* PR Rows */}
-                    {isExpanded &&
-                      group.prs.map((pr, idx) => {
-                        const prKey = `${pr.repository}-${pr.pullRequestNumber}`;
-                        const isPrExpanded =
-                          expandedPRs.has(prKey);
-                        return (
-                          <React.Fragment key={`${prKey}-${idx}`}>
-                            <TableRow
-                              onClick={() =>
-                                navigate(
-                                  `/miners/pr?repo=${encodeURIComponent(pr.repository)}&number=${pr.pullRequestNumber}`,
-                                  {
-                                    state: {
-                                      backLabel: `Back to ${username}`,
-                                    },
-                                  },
-                                )
-                              }
-                              sx={{
-                                cursor: 'pointer',
-                                '&:hover': {
-                                  backgroundColor:
-                                    'rgba(255, 255, 255, 0.05)',
-                                },
-                                transition: 'all 0.2s',
-                              }}
-                            >
-                              <TableCell
-                                sx={{
-                                  ...bodyCellStyle,
-                                  pl: 3,
-                                }}
-                              >
-                                <IconButton
-                                  size="small"
-                                  onClick={(e) =>
-                                    togglePR(prKey, e)
-                                  }
-                                  sx={{
-                                    color:
-                                      'rgba(255,255,255,0.3)',
-                                    p: 0.25,
-                                  }}
-                                >
-                                  {isPrExpanded ? (
-                                    <ExpandIcon
-                                      sx={{
-                                        fontSize: '0.9rem',
-                                      }}
-                                    />
-                                  ) : (
-                                    <CollapseIcon
-                                      sx={{
-                                        fontSize: '0.9rem',
-                                      }}
-                                    />
-                                  )}
-                                </IconButton>
-                              </TableCell>
-                              <TableCell
-                                sx={{
-                                  ...bodyCellStyle,
-                                  fontSize: {
-                                    xs: '0.75rem',
-                                    sm: '0.85rem',
-                                  },
-                                }}
-                              >
-                                #{pr.pullRequestNumber}
-                              </TableCell>
-                              <TableCell
-                                sx={{
-                                  ...bodyCellStyle,
-                                  fontSize: {
-                                    xs: '0.75rem',
-                                    sm: '0.85rem',
-                                  },
-                                }}
-                              >
-                                <Box
-                                  sx={{
-                                    overflow: 'hidden',
-                                    textOverflow:
-                                      'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                    maxWidth: {
-                                      xs: 150,
-                                      sm: 300,
-                                      md: 400,
-                                    },
-                                  }}
-                                >
-                                  {pr.pullRequestTitle}
-                                </Box>
-                              </TableCell>
-                              <TableCell
-                                align="right"
-                                sx={{
-                                  ...bodyCellStyle,
-                                  display: {
-                                    xs: 'none',
-                                    md: 'table-cell',
-                                  },
-                                }}
-                              >
-                                <Box
-                                  component="span"
-                                  sx={{
-                                    color:
-                                      theme.palette.diff
-                                        .additions,
-                                    mr: 1,
-                                    fontFamily:
-                                      '"JetBrains Mono", monospace',
-                                    fontSize: '0.8rem',
-                                  }}
-                                >
-                                  +{pr.additions}
-                                </Box>
-                                <Box
-                                  component="span"
-                                  sx={{
-                                    color:
-                                      theme.palette.diff
-                                        .deletions,
-                                    fontFamily:
-                                      '"JetBrains Mono", monospace',
-                                    fontSize: '0.8rem',
-                                  }}
-                                >
-                                  -{pr.deletions}
-                                </Box>
-                              </TableCell>
-                              <TableCell
-                                align="right"
-                                sx={bodyCellStyle}
-                              >
-                                {pr.prState === 'CLOSED' &&
-                                !pr.mergedAt ? (
-                                  <Typography
-                                    sx={{
-                                      fontFamily:
-                                        '"JetBrains Mono", monospace',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 600,
-                                      color:
-                                        'rgba(255,255,255,0.3)',
-                                    }}
-                                  >
-                                    -
-                                  </Typography>
-                                ) : !pr.mergedAt &&
-                                  pr.collateralScore ? (
-                                  <Typography
-                                    sx={{
-                                      fontFamily:
-                                        '"JetBrains Mono", monospace',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 600,
-                                      color: '#fb923c',
-                                    }}
-                                  >
-                                    {parseFloat(
-                                      pr.collateralScore,
-                                    ).toFixed(4)}
-                                  </Typography>
-                                ) : (
-                                  <Typography
-                                    sx={{
-                                      fontFamily:
-                                        '"JetBrains Mono", monospace',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 600,
-                                    }}
-                                  >
-                                    {parseFloat(
-                                      pr.score,
-                                    ).toFixed(4)}
-                                  </Typography>
-                                )}
-                              </TableCell>
-                              <TableCell
-                                align="right"
-                                sx={{
-                                  ...bodyCellStyle,
-                                  display: {
-                                    xs: 'none',
-                                    sm: 'table-cell',
-                                  },
-                                  color:
-                                    'rgba(255,255,255,0.7)',
-                                  fontSize: '0.8rem',
-                                }}
-                              >
-                                {pr.mergedAt
-                                  ? new Date(
-                                      pr.mergedAt,
-                                    ).toLocaleDateString()
-                                  : pr.prState === 'CLOSED'
-                                    ? 'Closed'
-                                    : 'Open'}
-                              </TableCell>
-                            </TableRow>
-
-                            {/* Expanded PR Scoring Breakdown */}
-                            <TableRow>
-                              <TableCell
-                                colSpan={6}
-                                sx={{
-                                  p: 0,
-                                  borderBottom: isPrExpanded
-                                    ? '1px solid rgba(255,255,255,0.1)'
-                                    : 'none',
-                                }}
-                              >
-                                <Collapse
-                                  in={isPrExpanded}
-                                  timeout="auto"
-                                  unmountOnExit
-                                >
-                                  <Box
-                                    sx={{
-                                      pl: {
-                                        xs: 3,
-                                        sm: 6,
-                                      },
-                                      pr: 2,
-                                      py: 1.5,
-                                      backgroundColor:
-                                        'rgba(255,255,255,0.02)',
-                                      borderTop:
-                                        '1px solid rgba(255,255,255,0.05)',
-                                    }}
-                                  >
-                                    <Box
-                                      sx={{
-                                        display: 'flex',
-                                        flexWrap: 'wrap',
-                                        gap: {
-                                          xs: 1.5,
-                                          sm: 3,
-                                        },
-                                      }}
-                                    >
-                                      <ScoreItem
-                                        label="Base Score"
-                                        value={
-                                          pr.baseScore
-                                            ? parseFloat(
-                                                pr.baseScore,
-                                              ).toFixed(4)
-                                            : 'N/A'
-                                        }
-                                      />
-                                      <ScoreItem
-                                        label="Token Score"
-                                        value={
-                                          pr.tokenScore?.toFixed(
-                                            4,
-                                          ) || 'N/A'
-                                        }
-                                      />
-                                      <ScoreItem
-                                        label="Structural"
-                                        value={
-                                          pr.structuralScore?.toFixed(
-                                            4,
-                                          ) || 'N/A'
-                                        }
-                                      />
-                                      <ScoreItem
-                                        label="Leaf"
-                                        value={
-                                          pr.leafScore?.toFixed(
-                                            4,
-                                          ) || 'N/A'
-                                        }
-                                      />
-                                      <ScoreItem
-                                        label="Credibility"
-                                        value={
-                                          pr.credibilityScalar?.toFixed(
-                                            4,
-                                          ) || 'N/A'
-                                        }
-                                      />
-                                      {pr.collateralScore && (
-                                        <ScoreItem
-                                          label="Collateral"
-                                          value={parseFloat(
-                                            pr.collateralScore,
-                                          ).toFixed(4)}
-                                          color="rgba(248,113,113,0.8)"
-                                        />
-                                      )}
-                                      {pr.predictedUsdPerDay !==
-                                        undefined &&
-                                        pr.predictedUsdPerDay !==
-                                          null && (
-                                          <ScoreItem
-                                            label="$/Day"
-                                            value={`$${pr.predictedUsdPerDay.toFixed(2)}`}
-                                            color={
-                                              alpha(theme.palette.status.success, 0.9)
-                                            }
-                                          />
-                                        )}
-                                    </Box>
-                                  </Box>
-                                </Collapse>
-                              </TableCell>
-                            </TableRow>
-                          </React.Fragment>
-                        );
-                      })}
-                  </React.Fragment>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                py: 1.5,
+                borderTop:
+                  '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <Box
+                onClick={() =>
+                  setPage((p) => Math.max(0, p - 1))
+                }
+                sx={{
+                  cursor:
+                    page > 0 ? 'pointer' : 'default',
+                  opacity: page > 0 ? 1 : 0.3,
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: 'rgba(255,255,255,0.6)',
+                  '&:hover':
+                    page > 0
+                      ? { color: '#fff' }
+                      : {},
+                }}
+              >
+                <PrevIcon sx={{ fontSize: '1.2rem' }} />
+              </Box>
+              <Typography
+                sx={{
+                  fontFamily:
+                    '"JetBrains Mono", monospace',
+                  fontSize: '0.75rem',
+                  color: 'rgba(255,255,255,0.5)',
+                }}
+              >
+                {page + 1} / {totalPages}
+              </Typography>
+              <Box
+                onClick={() =>
+                  setPage((p) =>
+                    Math.min(totalPages - 1, p + 1),
+                  )
+                }
+                sx={{
+                  cursor:
+                    page < totalPages - 1
+                      ? 'pointer'
+                      : 'default',
+                  opacity:
+                    page < totalPages - 1 ? 1 : 0.3,
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: 'rgba(255,255,255,0.6)',
+                  '&:hover':
+                    page < totalPages - 1
+                      ? { color: '#fff' }
+                      : {},
+                }}
+              >
+                <NextIcon sx={{ fontSize: '1.2rem' }} />
+              </Box>
+            </Box>
+          )}
+        </>
+      )}
     </Box>
   );
 };
 
-const ScoreItem: React.FC<{
-  label: string;
-  value: string;
-  color?: string;
-}> = ({ label, value, color }) => (
-  <Box>
-    <Typography
-      sx={{
-        fontFamily: '"JetBrains Mono", monospace',
-        fontSize: '0.6rem',
-        color: 'rgba(255,255,255,0.4)',
-        textTransform: 'uppercase',
-        letterSpacing: '0.5px',
-      }}
-    >
-      {label}
-    </Typography>
-    <Typography
-      sx={{
-        fontFamily: '"JetBrains Mono", monospace',
-        fontSize: '0.8rem',
-        fontWeight: 600,
-        color: color || '#ffffff',
-      }}
-    >
-      {value}
-    </Typography>
-  </Box>
-);
+const sortLabelSx = {
+  '&.MuiTableSortLabel-root': {
+    color: 'rgba(255,255,255,0.6)',
+  },
+  '&.MuiTableSortLabel-root:hover': {
+    color: '#fff',
+  },
+  '&.Mui-active': { color: '#fff' },
+  '& .MuiTableSortLabel-icon': {
+    color: 'rgba(255,255,255,0.4) !important',
+  },
+};
 
-const headerStyle = {
+const headerCellSx = {
   backgroundColor: 'rgba(18, 18, 20, 0.95)',
   backdropFilter: 'blur(8px)',
-  color: 'rgba(255, 255, 255, 0.7)',
+  color: 'rgba(255,255,255,0.6)',
   fontFamily: '"JetBrains Mono", monospace',
   fontWeight: 500,
   fontSize: { xs: '0.65rem', sm: '0.75rem' },
-  borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+  borderBottom: '1px solid rgba(255,255,255,0.15)',
+  height: { xs: '48px', sm: '56px' },
+  py: { xs: 1, sm: 1.5 },
+  px: { xs: 0.5, sm: 2 },
   textTransform: 'uppercase' as const,
   letterSpacing: '0.5px',
-  py: 1,
-  px: { xs: 0.5, sm: 1.5 },
 };
 
-const bodyCellStyle = {
-  color: '#ffffff',
+const bodyCellSx = {
+  color: '#fff',
   fontFamily: '"JetBrains Mono", monospace',
-  borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+  borderBottom: '1px solid rgba(255,255,255,0.06)',
   fontSize: '0.85rem',
-  py: 0.75,
-  px: { xs: 0.5, sm: 1.5 },
+  py: { xs: 0.75, sm: 1 },
+  px: { xs: 0.5, sm: 2 },
+  height: { xs: '52px', sm: '60px' },
 };
 
 export default MinerContributionsTab;

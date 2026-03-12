@@ -1,12 +1,19 @@
 import React, { useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Box, CircularProgress, Card, Typography, alpha } from '@mui/material';
+import {
+  Box,
+  Card,
+  Typography,
+  Skeleton,
+  alpha,
+} from '@mui/material';
+import { WarningAmber as WarningIcon } from '@mui/icons-material';
 import { Page } from '../components/layout';
 import {
   MinerProfileHeader,
-  MinerEarningsStrip,
   MinerDetailsTabs,
   MinerOverviewTab,
+  MinerActivityTab,
   MinerContributionsTab,
   MinerTierTab,
   MinerScoreTab,
@@ -27,7 +34,8 @@ import { STATUS_COLORS } from '../theme';
 
 const VALID_TABS: MinerTab[] = [
   'overview',
-  'contributions',
+  'activity',
+  'pull-requests',
   'tiers',
   'score',
 ];
@@ -60,7 +68,7 @@ const MinerDetailsPage: React.FC = () => {
 
   // If no githubId is provided, redirect to miners page
   if (!githubId) {
-    navigate('/miners');
+    navigate('/top-miners');
     return null;
   }
 
@@ -130,19 +138,101 @@ const MinerDetailsContent: React.FC<MinerDetailsContentProps> = ({
   const tierConfigs = tierConfigData?.tiers;
 
   if (isLoadingStats) {
+    const skeletonBg = 'rgba(255, 255, 255, 0.05)';
     return (
-      <Card
-        sx={{
-          borderRadius: '8px',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          backgroundColor: 'transparent',
-          p: 4,
-          textAlign: 'center',
-        }}
-        elevation={0}
-      >
-        <CircularProgress size={40} sx={{ color: 'primary.main' }} />
-      </Card>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* Profile header skeleton */}
+        <Box
+          sx={{
+            borderRadius: 3,
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            p: { xs: 2, md: 3 },
+            display: 'flex',
+            gap: 2.5,
+            alignItems: 'flex-start',
+          }}
+        >
+          <Skeleton
+            variant="circular"
+            sx={{
+              bgcolor: skeletonBg,
+              flexShrink: 0,
+              width: { xs: 56, md: 80 },
+              height: { xs: 56, md: 80 },
+            }}
+          />
+          <Box sx={{ flex: 1 }}>
+            <Skeleton
+              variant="rounded"
+              width="60%"
+              height={32}
+              sx={{ bgcolor: skeletonBg, mb: 1.5 }}
+            />
+            <Skeleton
+              variant="text"
+              width="40%"
+              height={20}
+              sx={{ bgcolor: skeletonBg, mb: 1 }}
+            />
+            <Skeleton
+              variant="text"
+              width="70%"
+              height={16}
+              sx={{ bgcolor: skeletonBg }}
+            />
+          </Box>
+        </Box>
+
+        {/* Earnings strip skeleton */}
+        <Box
+          sx={{
+            borderRadius: 3,
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            p: 2,
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            gap: 2,
+          }}
+        >
+          <Skeleton
+            variant="rounded"
+            sx={{
+              bgcolor: skeletonBg,
+              flex: { md: '0 0 35%' },
+              height: { xs: 100, md: 120 },
+              borderRadius: 2,
+            }}
+          />
+          <Box
+            sx={{
+              flex: 1,
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: 'repeat(2, 1fr)',
+                sm: 'repeat(3, 1fr)',
+              },
+              gap: 1.5,
+            }}
+          >
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton
+                key={i}
+                variant="rounded"
+                height={52}
+                sx={{ bgcolor: skeletonBg, borderRadius: 2 }}
+              />
+            ))}
+          </Box>
+        </Box>
+
+        {/* Tab bar skeleton */}
+        <Skeleton
+          variant="rounded"
+          width="100%"
+          height={40}
+          sx={{ bgcolor: skeletonBg, borderRadius: 2 }}
+        />
+      </Box>
     );
   }
 
@@ -171,64 +261,142 @@ const MinerDetailsContent: React.FC<MinerDetailsContentProps> = ({
 
   return (
     <>
-      {/* Profile Header */}
+      {/* Profile + Stats Card */}
       <MinerProfileHeader
         minerStats={minerStats}
         githubData={githubData}
         prs={prs}
         githubId={githubId}
-      />
-
-      {/* Earnings Strip */}
-      <MinerEarningsStrip
-        minerStats={minerStats}
         allMinersStats={allMinersStats}
         prScoring={generalConfig?.repositoryPrScoring}
       />
 
+      {/* Failed Reason Banner */}
+      {minerStats.failedReason && (
+        <Card
+          sx={{
+            p: 2,
+            backgroundColor: alpha(STATUS_COLORS.error, 0.08),
+            border: `1px solid ${alpha(STATUS_COLORS.error, 0.3)}`,
+            borderRadius: 2,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 1.5,
+          }}
+          elevation={0}
+        >
+          <WarningIcon
+            sx={{
+              color: STATUS_COLORS.error,
+              fontSize: '1.2rem',
+              mt: 0.25,
+              flexShrink: 0,
+            }}
+          />
+          <Box>
+            <Typography
+              sx={{
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                color: STATUS_COLORS.error,
+                mb: 0.5,
+              }}
+            >
+              Scoring Issue Detected
+            </Typography>
+            <Typography
+              sx={{
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: '0.8rem',
+                color: 'rgba(255, 255, 255, 0.7)',
+                lineHeight: 1.5,
+              }}
+            >
+              {minerStats.failedReason}
+            </Typography>
+          </Box>
+        </Card>
+      )}
+
       {/* Tabs */}
-      <MinerDetailsTabs
-        activeTab={activeTab}
-        onTabChange={onTabChange}
-      />
+      <Box
+        sx={{
+          position: { xs: 'sticky', md: 'static' },
+          top: { xs: 0, md: 'auto' },
+          zIndex: 10,
+          mx: { xs: -2, sm: -2, md: 0 },
+          px: { xs: 2, sm: 2, md: 0 },
+          py: { xs: 0.5, md: 0 },
+          backgroundColor: {
+            xs: 'rgba(18, 18, 20, 0.95)',
+            md: 'transparent',
+          },
+          backdropFilter: { xs: 'blur(8px)', md: 'none' },
+        }}
+      >
+        <MinerDetailsTabs
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+        />
+      </Box>
 
       {/* Tab Content */}
-      {activeTab === 'overview' && (
-        <MinerOverviewTab
-          minerStats={minerStats}
-          prs={prs}
-          repos={repos}
-          allMinerStats={allMinersStats}
-          tierConfigs={tierConfigs}
-          isLoadingPRs={isLoadingPRs}
-        />
-      )}
+      <Box
+        key={activeTab}
+        sx={{
+          '@keyframes tabSlideUp': {
+            from: { opacity: 0, transform: 'translateY(12px)' },
+            to: { opacity: 1, transform: 'translateY(0)' },
+          },
+          animation: 'tabSlideUp 0.3s ease-out',
+        }}
+      >
+        {activeTab === 'overview' && (
+          <MinerOverviewTab
+            minerStats={minerStats}
+            prs={prs}
+            tierConfigs={tierConfigs}
+            prScoring={generalConfig?.repositoryPrScoring}
+          />
+        )}
 
-      {activeTab === 'contributions' && (
-        <MinerContributionsTab
-          prs={prs}
-          repos={repos}
-          githubId={githubId}
-        />
-      )}
+        {activeTab === 'activity' && (
+          <MinerActivityTab
+            minerStats={minerStats}
+            prs={prs}
+            repos={repos}
+            allMinerStats={allMinersStats}
+            isLoadingPRs={isLoadingPRs}
+          />
+        )}
 
-      {activeTab === 'tiers' && (
-        <MinerTierTab
-          githubId={githubId}
-          minerStats={minerStats}
-          tierConfigs={tierConfigs}
-        />
-      )}
+        {activeTab === 'pull-requests' && (
+          <MinerContributionsTab
+            prs={prs}
+            repos={repos}
+            githubId={githubId}
+          />
+        )}
 
-      {activeTab === 'score' && (
-        <MinerScoreTab
-          minerStats={minerStats}
-          prs={prs}
-          generalConfig={generalConfig}
-          tierConfigs={tierConfigs}
-          githubId={githubId}
-        />
-      )}
+        {activeTab === 'tiers' && (
+          <MinerTierTab
+            githubId={githubId}
+            minerStats={minerStats}
+            tierConfigs={tierConfigs}
+          />
+        )}
+
+        {activeTab === 'score' && (
+          <MinerScoreTab
+            minerStats={minerStats}
+            prs={prs}
+            generalConfig={generalConfig}
+            tierConfigs={tierConfigs}
+            githubId={githubId}
+          />
+        )}
+      </Box>
     </>
   );
 };
